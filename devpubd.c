@@ -43,6 +43,9 @@ __RCSID("$NetBSD: devpubd.c,v 1.7 2021/06/21 03:14:12 christos Exp $");
 #include <sys/ioctl.h>
 #include <sys/drvctlio.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/stat.h>
 
 #include <assert.h>
 #include <err.h>
@@ -53,6 +56,9 @@ __RCSID("$NetBSD: devpubd.c,v 1.7 2021/06/21 03:14:12 christos Exp $");
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <pthread.h>
+
+#include "ndevd.h"
 
 static int drvctl_fd = -1;
 static const char devpubd_script[] = DEVPUBD_RUN_HOOKS;
@@ -64,8 +70,125 @@ struct devpubd_probe_event {
 
 static TAILQ_HEAD(, devpubd_probe_event) devpubd_probe_events;
 
-#define	DEVPUBD_ATTACH_EVENT	"device-attach"
-#define	DEVPUBD_DETACH_EVENT	"device-detach"
+struct client {
+	int fd;
+	TAILQ_ENTRY(client) entries;
+};
+
+static TAILQ_HEAD(, client) clients;
+
+static unsigned int max_clients = 50;
+static unsigned int num_clients;
+pthread_t thread;
+pthread_mutex_t mutex;
+
+static int
+create_socket(const char *name)
+{
+	int fd, slen;
+	struct sockaddr_un sun;
+
+	if ((fd = socket(PF_LOCAL, SOCK_SEQPACKET, 0)) < 0) {
+		syslog(LOG_ERR, "socket: '%s'", name);
+		exit(EXIT_FAILURE);
+	}
+	bzero(&sun, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	strlcpy(sun.sun_path, name, sizeof(sun.sun_path));
+	slen = SUN_LEN(&sun);
+	unlink(name);
+	if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
+		syslog(LOG_ERR, "fcntl: '%s'", name);
+		exit(EXIT_FAILURE);
+	}
+	if (bind(fd, (struct sockaddr *) & sun, slen) < 0) {
+		syslog(LOG_ERR, "bind: '%s'", name);
+		exit(EXIT_FAILURE);
+	}
+	listen(fd, max_clients);
+	if (chown(name, 0, 0)) {
+		syslog(LOG_ERR, "chown: '%s'", name);
+		exit(EXIT_FAILURE);
+	}
+	if (chmod(name, 0666)) {
+		syslog(LOG_ERR, "chmod: '%s'", name);
+		exit(EXIT_FAILURE);
+	}
+	return (fd);
+}
+
+static void
+notify_clients(const char *event, const char *device)
+{
+	struct client *cli, *tmp;
+	struct ndevd_msg msg;
+	int event_len, device_len;
+	int maxlen = sizeof(msg.event);
+	int msglen = sizeof(msg);
+
+	event_len = snprintf(msg.event, maxlen, "%s", event);
+	device_len = snprintf(msg.device, maxlen, "%s", device);
+
+	if (event_len < 0 || device_len < 0 || event_len >= maxlen || device_len >= maxlen) {
+		syslog(LOG_ERR, "notify_clients: message too long or encoding error");
+		return;
+	}
+
+	pthread_mutex_lock(&mutex);
+	TAILQ_FOREACH_SAFE(cli, &clients, entries, tmp) {
+		if (send(cli->fd, &msg, msglen, MSG_EOR) != msglen) {
+			syslog(LOG_WARNING, "notification of (%d) failed (%s), dropped from the clients", cli->fd, strerror(errno));
+			close(cli->fd);
+			TAILQ_REMOVE(&clients, cli, entries);
+			num_clients--;
+		}
+	}
+	pthread_mutex_unlock(&mutex);
+}
+
+static void*
+listening_thread(void *arg)
+{
+    int client_fd;
+	int reported = 0;
+    int socket_fd = *(int *)arg;
+    free(arg);
+
+    for (;;) {
+		if (num_clients >= max_clients && !reported) {
+			syslog(LOG_WARNING, "stop accepting, client/limit: %d/%d", num_clients, max_clients);
+			reported = 1;
+			continue;
+		}
+
+		if (reported) {
+			syslog(LOG_DEBUG, "start accepting, client/limit: %d/%d", num_clients, max_clients);
+			reported = 0;
+		}
+
+        client_fd = accept(socket_fd, NULL, NULL );
+
+        if (client_fd == -1 ) {
+			if (errno != EAGAIN) {
+            	syslog(LOG_ERR, "accept failed (%s)", strerror(errno));
+			}
+            continue;
+        }
+
+        struct client *newcli = calloc(1, sizeof(*newcli));
+        if (!newcli) {
+            syslog(LOG_ERR, "calloc failed for new client");
+            close(client_fd);
+            continue;
+        }
+
+        newcli->fd = client_fd;
+        pthread_mutex_lock(&mutex);
+		TAILQ_INSERT_TAIL(&clients, newcli, entries);
+		num_clients++;
+        pthread_mutex_unlock(&mutex);
+    }
+}
 
 __dead static void
 devpubd_exec(const char *path, char * const *argv)
@@ -140,6 +263,26 @@ devpubd_eventloop(void)
 
 	device[1] = NULL;
 
+	int *arg = calloc(1, sizeof(int));
+	if (!arg) {
+    	syslog(LOG_ERR, "calloc failed for arg");
+    	exit(EXIT_FAILURE);
+	}
+	*arg = create_socket(NDEVD_SOCKET);
+
+	if (pthread_mutex_init(&mutex, NULL) != 0) {
+    	syslog(LOG_ERR, "thread init failed");
+    	free(arg);
+    	exit(EXIT_FAILURE);
+	}
+
+	if (pthread_create(&thread, NULL, listening_thread, arg) != 0) {
+    	syslog(LOG_ERR, "thread create failed");
+    	free(arg);
+    	exit(EXIT_FAILURE);
+	}
+	pthread_detach(thread);
+
 	for (;;) {
 		res = prop_dictionary_recv_ioctl(drvctl_fd, DRVGETEVENT, &ev);
 		if (res)
@@ -151,6 +294,8 @@ devpubd_eventloop(void)
 		    event, device[0]);
 
 		devpubd_eventhandler(event, device);
+
+		notify_clients(event, device[0]);
 
 		prop_object_release(ev);
 	}
@@ -240,7 +385,7 @@ devpubd_init(void)
 	TAILQ_FOREACH(ev, &devpubd_probe_events, entries) {
 		devs[i++] = ev->device;
 	}
-	devpubd_eventhandler(DEVPUBD_ATTACH_EVENT, devs);
+	devpubd_eventhandler(NDEVD_ATTACH_EVENT, devs);
 	free(devs);
 	while ((ev = TAILQ_FIRST(&devpubd_probe_events)) != NULL) {
 		TAILQ_REMOVE(&devpubd_probe_events, ev, entries);
@@ -300,8 +445,10 @@ main(int argc, char *argv[])
 		}
 	}
 
-	if (!once)
+	if (!once) {
+		num_clients = 0;
 		devpubd_eventloop();
+	}
 
 	return EXIT_SUCCESS;
 }
