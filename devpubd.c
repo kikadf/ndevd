@@ -149,12 +149,12 @@ notify_clients(const char *event, const char *device)
 static void*
 listening_thread(void *arg)
 {
-    int client_fd;
+	int client_fd;
 	int reported = 0;
-    int socket_fd = *(int *)arg;
-    free(arg);
+	int socket_fd = *(int *)arg;
+	free(arg);
 
-    for (;;) {
+	for (;;) {
 		if (num_clients >= max_clients && !reported) {
 			syslog(LOG_WARNING, "stop accepting, client/limit: %d/%d", num_clients, max_clients);
 			reported = 1;
@@ -166,28 +166,28 @@ listening_thread(void *arg)
 			reported = 0;
 		}
 
-        client_fd = accept(socket_fd, NULL, NULL );
+		client_fd = accept(socket_fd, NULL, NULL );
 
-        if (client_fd == -1 ) {
+		if (client_fd == -1 ) {
 			if (errno != EAGAIN) {
-            	syslog(LOG_ERR, "accept failed (%s)", strerror(errno));
+				syslog(LOG_ERR, "accept failed (%s)", strerror(errno));
 			}
-            continue;
-        }
+			continue;
+		}
 
-        struct client *newcli = calloc(1, sizeof(*newcli));
-        if (!newcli) {
-            syslog(LOG_ERR, "calloc failed for new client");
-            close(client_fd);
-            continue;
-        }
+		struct client *newcli = calloc(1, sizeof(*newcli));
+		if (!newcli) {
+			syslog(LOG_ERR, "calloc failed for new client");
+			close(client_fd);
+			continue;
+		}
 
-        newcli->fd = client_fd;
-        pthread_mutex_lock(&mutex);
+		newcli->fd = client_fd;
+		pthread_mutex_lock(&mutex);
 		TAILQ_INSERT_TAIL(&clients, newcli, entries);
 		num_clients++;
-        pthread_mutex_unlock(&mutex);
-    }
+		pthread_mutex_unlock(&mutex);
+	}
 }
 
 __dead static void
@@ -215,7 +215,7 @@ devpubd_eventhandler(const char *event, const char **device)
 	for (ndevs = 0, i = 0; device[i] != NULL; i++) {
 		++ndevs;
 		syslog(LOG_DEBUG, "event = '%s', device = '%s'", event,
-		    device[i]);
+			device[i]);
 	}
 
 	argv = calloc(3 + ndevs, sizeof(*argv));
@@ -241,10 +241,10 @@ devpubd_eventhandler(const char *event, const char **device)
 		}
 		if (WIFEXITED(status) && WEXITSTATUS(status)) {
 			syslog(LOG_WARNING, "%s exited with status %d",
-			    devpubd_script, WEXITSTATUS(status));
+				devpubd_script, WEXITSTATUS(status));
 		} else if (WIFSIGNALED(status)) {
 			syslog(LOG_WARNING, "%s received signal %d",
-			    devpubd_script, WTERMSIG(status));
+				devpubd_script, WTERMSIG(status));
 		}
 		break;
 	}
@@ -265,21 +265,21 @@ devpubd_eventloop(void)
 
 	int *arg = calloc(1, sizeof(int));
 	if (!arg) {
-    	syslog(LOG_ERR, "calloc failed for arg");
-    	exit(EXIT_FAILURE);
+		syslog(LOG_ERR, "calloc failed for arg");
+		exit(EXIT_FAILURE);
 	}
 	*arg = create_socket(NDEVD_SOCKET);
 
 	if (pthread_mutex_init(&mutex, NULL) != 0) {
-    	syslog(LOG_ERR, "thread init failed");
-    	free(arg);
-    	exit(EXIT_FAILURE);
+		syslog(LOG_ERR, "thread init failed");
+		free(arg);
+		exit(EXIT_FAILURE);
 	}
 
 	if (pthread_create(&thread, NULL, listening_thread, arg) != 0) {
-    	syslog(LOG_ERR, "thread create failed");
-    	free(arg);
-    	exit(EXIT_FAILURE);
+		syslog(LOG_ERR, "thread create failed");
+		free(arg);
+		exit(EXIT_FAILURE);
 	}
 	pthread_detach(thread);
 
@@ -291,7 +291,7 @@ devpubd_eventloop(void)
 		prop_dictionary_get_string(ev, "device", &device[0]);
 
 		printf("%s: event='%s', device='%s'\n", __func__,
-		    event, device[0]);
+			event, device[0]);
 
 		devpubd_eventhandler(event, device);
 
