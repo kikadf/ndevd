@@ -97,10 +97,6 @@ create_socket(const char *name)
 	strlcpy(sun.sun_path, name, sizeof(sun.sun_path));
 	slen = SUN_LEN(&sun);
 	unlink(name);
-	if (fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
-		syslog(LOG_ERR, "fcntl: '%s'", name);
-		exit(EXIT_FAILURE);
-	}
 	if (bind(fd, (struct sockaddr *) & sun, slen) < 0) {
 		syslog(LOG_ERR, "bind: '%s'", name);
 		exit(EXIT_FAILURE);
