@@ -150,22 +150,11 @@ static void*
 listening_thread(void *arg)
 {
 	int client_fd;
-	int reported = 0;
+	int reported = 0, reject;
 	int socket_fd = *(int *)arg;
 	free(arg);
 
 	for (;;) {
-		if (num_clients >= max_clients && !reported) {
-			syslog(LOG_WARNING, "stop accepting, client/limit: %d/%d", num_clients, max_clients);
-			reported = 1;
-			continue;
-		}
-
-		if (reported) {
-			syslog(LOG_DEBUG, "start accepting, client/limit: %d/%d", num_clients, max_clients);
-			reported = 0;
-		}
-
 		client_fd = accept(socket_fd, NULL, NULL );
 
 		if (client_fd == -1 ) {
@@ -173,6 +162,24 @@ listening_thread(void *arg)
 				syslog(LOG_ERR, "accept failed (%s)", strerror(errno));
 			}
 			continue;
+		}
+
+		pthread_mutex_lock(&mutex);
+		reject = (num_clients >= max_clients);
+		pthread_mutex_unlock(&mutex);
+
+		if (reject) {
+			close(client_fd);
+			if (!reported) {
+				syslog(LOG_WARNING, "stop accepting, client/limit: %d/%d", num_clients, max_clients);
+				reported = 1;
+			}
+			continue;
+		}
+
+		if (reported) {
+			syslog(LOG_DEBUG, "start accepting, client/limit: %d/%d", num_clients, max_clients);
+			reported = 0;
 		}
 
 		struct client *newcli = calloc(1, sizeof(*newcli));
