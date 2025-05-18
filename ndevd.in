@@ -3,6 +3,7 @@
 
 # PROVIDE: ndevd devpubd
 # REQUIRE: root
+# KEYWORD: shutdown
 
 $_rc_subr_loaded . /etc/rc.subr
 
@@ -14,7 +15,7 @@ start_precmd="checkdevpubd"
 checkdevpubd() {
 	# Die if devpubd is also set
 	if checkyesno devpubd ; then
-		warn "disable 'devpubd' when setting 'ndevd'!"
+		warn "Disable 'devpubd' when enabling 'ndevd'!"
 		return 1
 	fi
 }
