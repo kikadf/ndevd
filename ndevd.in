@@ -9,6 +9,15 @@ $_rc_subr_loaded . /etc/rc.subr
 name="ndevd"
 rcvar=$name
 command="@PREFIX@/sbin/${name}"
+start_precmd="checkdevpubd"
+
+checkdevpubd() {
+	# Die if devpubd is also set
+	if checkyesno devpubd ; then
+		warn "disable 'devpubd' when setting 'ndevd'!"
+		return 1
+	fi
+}
 
 load_rc_config $name
 run_rc_command "$1"
