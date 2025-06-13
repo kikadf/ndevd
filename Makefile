@@ -1,7 +1,7 @@
-CC=			gcc
+CC=		gcc
 SED=		sed
 INSTALL=	install
-RM=			rm -f
+RM=		rm -f
 
 PROG=		ndevd
 SRC=		devpubd.c
@@ -18,7 +18,7 @@ INCLUDEDIR=	${PREFIX}/include
 MANDIR=		${PREFIX}/man/man8
 SCRIPTDIR=	${PREFIX}/libexec
 HOOKSDIR=	${SCRIPTDIR}/ndevd-hooks
-RCDIR=		/etc/rc.d
+RCDIR=		${PREFIX}/share/examples/${PROG}
 
 CFLAGS+=	-DDEVPUBD_RUN_HOOKS=\"${PREFIX}/libexec/ndevd-run-hooks\"
 LIBS+=		-lprop -pthread
@@ -39,6 +39,7 @@ install:
 	$(INSTALL) -d $(DESTDIR)$(INCLUDEDIR)
 	$(INSTALL) -d $(DESTDIR)$(HOOKSDIR)
 	$(INSTALL) -d $(DESTDIR)$(MANDIR)
+	$(INSTALL) -d $(DESTDIR)$(RCDIR)
 	$(INSTALL) -m755 $(PROG) $(DESTDIR)$(BINDIR)
 	$(INSTALL) -m755 $(SCRIPT) $(DESTDIR)$(SCRIPTDIR)/ndevd-run-hooks
 	$(INSTALL) -m755 $(RCSCRIPT) $(DESTDIR)$(RCDIR)
