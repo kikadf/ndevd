@@ -1,5 +1,5 @@
-
-
+#ifndef NDEVD_H
+#define NDEVD_H
 
 #define	NDEVD_ATTACH_EVENT	"device-attach"
 #define	NDEVD_DETACH_EVENT	"device-detach"
@@ -11,3 +11,5 @@ struct ndevd_msg {
     char event[NDEVD_MSG];
     char device[NDEVD_MSG];
 };
+
+#endif /* NDEVD_H */
