@@ -8,7 +8,7 @@ SRC=		devpubd.c
 HEADER=		ndevd.h
 MAN=		devpubd.8
 SCRIPT=		devpubd-run-hooks
-RCSCRIPT=	ndevd
+RCSCRIPT=	ndevd.sh
 HOOKS=		01-makedev 02-wedgenames
 CLEANFILES=	$(SCRIPT) $(RCSCRIPT)
 
@@ -18,7 +18,7 @@ INCLUDEDIR=	${PREFIX}/include
 MANDIR=		${PREFIX}/man/man8
 SCRIPTDIR=	${PREFIX}/libexec
 HOOKSDIR=	${SCRIPTDIR}/ndevd-hooks
-RCDIR=		${PREFIX}/share/examples/${PROG}
+RCDIR=		${PREFIX}/share/examples/rc.d
 
 CFLAGS+=	-DDEVPUBD_RUN_HOOKS=\"${PREFIX}/libexec/ndevd-run-hooks\"
 LIBS+=		-lprop -pthread
@@ -42,7 +42,7 @@ install:
 	$(INSTALL) -d $(DESTDIR)$(RCDIR)
 	$(INSTALL) -m755 $(PROG) $(DESTDIR)$(BINDIR)
 	$(INSTALL) -m755 $(SCRIPT) $(DESTDIR)$(SCRIPTDIR)/ndevd-run-hooks
-	$(INSTALL) -m755 $(RCSCRIPT) $(DESTDIR)$(RCDIR)
+	$(INSTALL) -m755 $(RCSCRIPT) $(DESTDIR)$(RCDIR)/ndevd
 .	for hook in $(HOOKS)
 		$(INSTALL) -m755 hooks/$(hook) $(DESTDIR)$(HOOKSDIR)
 .	endfor
