@@ -395,6 +395,8 @@ devpubd_init(void)
 		free(ev->device);
 		free(ev);
 	}
+
+	TAILQ_INIT(&clients);
 }
 
 __dead static void
