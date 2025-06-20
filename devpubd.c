@@ -57,11 +57,18 @@ __RCSID("$NetBSD: devpubd.c,v 1.7 2021/06/21 03:14:12 christos Exp $");
 #include <syslog.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <signal.h>
 
 #include "ndevd.h"
 
 static int drvctl_fd = -1;
 static const char devpubd_script[] = DEVPUBD_RUN_HOOKS;
+static int socket_fd = -1;
+static unsigned int max_clients = 50;
+static unsigned int num_clients = 0;
+static unsigned int ndevd_stop = 0;
+pthread_t thread;
+pthread_mutex_t mutex;
 
 struct devpubd_probe_event {
 	char *device;
@@ -77,10 +84,11 @@ struct client {
 
 static TAILQ_HEAD(, client) clients;
 
-static unsigned int max_clients = 50;
-static unsigned int num_clients;
-pthread_t thread;
-pthread_mutex_t mutex;
+static void
+close_ndevd(int a)
+{
+	ndevd_stop = 1;
+}
 
 static int
 create_socket(const char *name)
@@ -150,7 +158,7 @@ listening_thread(void *arg)
 	int socket_fd = *(int *)arg;
 	free(arg);
 
-	for (;;) {
+	while (!ndevd_stop) {
 		client_fd = accept(socket_fd, NULL, NULL );
 
 		if (client_fd == -1 ) {
@@ -191,6 +199,17 @@ listening_thread(void *arg)
 		num_clients++;
 		pthread_mutex_unlock(&mutex);
 	}
+
+	pthread_mutex_lock(&mutex);
+    struct client *cli, *tmp;
+    TAILQ_FOREACH_SAFE(cli, &clients, entries, tmp) {
+        close(cli->fd);
+        TAILQ_REMOVE(&clients, cli, entries);
+        free(cli);
+    }
+    pthread_mutex_unlock(&mutex);
+
+	return NULL;
 }
 
 __dead static void
@@ -271,7 +290,8 @@ devpubd_eventloop(void)
 		syslog(LOG_ERR, "calloc failed for arg");
 		exit(EXIT_FAILURE);
 	}
-	*arg = create_socket(NDEVD_SOCKET);
+	socket_fd = create_socket(NDEVD_SOCKET);
+	*arg = socket_fd;
 
 	if (pthread_mutex_init(&mutex, NULL) != 0) {
 		syslog(LOG_ERR, "thread init failed");
@@ -284,9 +304,8 @@ devpubd_eventloop(void)
 		free(arg);
 		exit(EXIT_FAILURE);
 	}
-	pthread_detach(thread);
 
-	for (;;) {
+	while (!ndevd_stop) {
 		res = prop_dictionary_recv_ioctl(drvctl_fd, DRVGETEVENT, &ev);
 		if (res)
 			err(EXIT_FAILURE, "DRVGETEVENT failed");
@@ -451,8 +470,19 @@ main(int argc, char *argv[])
 	}
 
 	if (!once) {
-		num_clients = 0;
+		signal(SIGPIPE, SIG_IGN);
+		signal(SIGHUP, close_ndevd);
+		signal(SIGINT, close_ndevd);
+		signal(SIGTERM, close_ndevd);
 		devpubd_eventloop();
+	}
+
+	close(drvctl_fd);
+	if (socket_fd != -1) {
+		pthread_join(thread, NULL);
+		pthread_mutex_destroy(&mutex);
+    	close(socket_fd);
+		unlink(NDEVD_SOCKET);
 	}
 
 	return EXIT_SUCCESS;
