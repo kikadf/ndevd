@@ -140,7 +140,7 @@ notify_clients(const char *event, const char *device)
 
 	pthread_mutex_lock(&mutex);
 	TAILQ_FOREACH_SAFE(cli, &clients, entries, tmp) {
-		if (send(cli->fd, &msg, msglen, MSG_EOR) != msglen) {
+		if (send(cli->fd, &msg, msglen, MSG_EOR | MSG_NOSIGNAL) != msglen) {
 			syslog(LOG_WARNING, "notification of (%d) failed (%s), dropped from the clients", cli->fd, strerror(errno));
 			close(cli->fd);
 			TAILQ_REMOVE(&clients, cli, entries);
@@ -470,7 +470,6 @@ main(int argc, char *argv[])
 	}
 
 	if (!once) {
-		signal(SIGPIPE, SIG_IGN);
 		signal(SIGHUP, close_ndevd);
 		signal(SIGINT, close_ndevd);
 		signal(SIGTERM, close_ndevd);
@@ -479,9 +478,10 @@ main(int argc, char *argv[])
 
 	close(drvctl_fd);
 	if (socket_fd != -1) {
+		shutdown(socket_fd, SHUT_RDWR);
 		pthread_join(thread, NULL);
 		pthread_mutex_destroy(&mutex);
-    	close(socket_fd);
+		close(socket_fd);
 		unlink(NDEVD_SOCKET);
 	}
 
