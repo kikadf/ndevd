@@ -298,11 +298,11 @@ devpubd_eventloop(void)
 	}
 
 	struct client *cli, *tmp;
-    TAILQ_FOREACH_SAFE(cli, &clients, entries, tmp) {
-    	close(cli->fd);
-    	TAILQ_REMOVE(&clients, cli, entries);
-    	free(cli);
-    }
+	TAILQ_FOREACH_SAFE(cli, &clients, entries, tmp) {
+		close(cli->fd);
+		TAILQ_REMOVE(&clients, cli, entries);
+		free(cli);
+	}
 	close(socket_fd);
 	unlink(NDEVD_SOCKET);
 	close(drvctl_fd);
