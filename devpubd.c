@@ -56,7 +56,6 @@ __RCSID("$NetBSD: devpubd.c,v 1.7 2021/06/21 03:14:12 christos Exp $");
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
-#include <pthread.h>
 #include <signal.h>
 
 #include "ndevd.h"
@@ -67,8 +66,6 @@ static int socket_fd = -1;
 static unsigned int max_clients = 50;
 static unsigned int num_clients = 0;
 static unsigned int ndevd_stop = 0;
-pthread_t thread;
-pthread_mutex_t mutex;
 
 struct devpubd_probe_event {
 	char *device;
@@ -138,7 +135,6 @@ notify_clients(const char *event, const char *device)
 		return;
 	}
 
-	pthread_mutex_lock(&mutex);
 	TAILQ_FOREACH_SAFE(cli, &clients, entries, tmp) {
 		if (send(cli->fd, &msg, msglen, MSG_EOR | MSG_NOSIGNAL) != msglen) {
 			syslog(LOG_WARNING, "notification of (%d) failed (%s), dropped from the clients", cli->fd, strerror(errno));
@@ -147,69 +143,33 @@ notify_clients(const char *event, const char *device)
 			num_clients--;
 		}
 	}
-	pthread_mutex_unlock(&mutex);
 }
 
-static void*
-listening_thread(void *arg)
+static void
+handle_clients(int reject)
 {
-	int client_fd;
-	int reported = 0, reject;
-	int socket_fd = *(int *)arg;
-	free(arg);
+	int client_fd = accept(socket_fd, NULL, NULL );
 
-	while (!ndevd_stop) {
-		client_fd = accept(socket_fd, NULL, NULL );
-
-		if (client_fd == -1 ) {
-			if (errno != EAGAIN) {
-				syslog(LOG_ERR, "accept failed (%s)", strerror(errno));
-			}
-			continue;
-		}
-
-		pthread_mutex_lock(&mutex);
-		reject = (num_clients >= max_clients);
-		pthread_mutex_unlock(&mutex);
-
-		if (reject) {
-			close(client_fd);
-			if (!reported) {
-				syslog(LOG_WARNING, "stop accepting, client/limit: %d/%d", num_clients, max_clients);
-				reported = 1;
-			}
-			continue;
-		}
-
-		if (reported) {
-			syslog(LOG_DEBUG, "start accepting, client/limit: %d/%d", num_clients, max_clients);
-			reported = 0;
-		}
-
-		struct client *newcli = calloc(1, sizeof(*newcli));
-		if (!newcli) {
-			syslog(LOG_ERR, "calloc failed for new client");
-			close(client_fd);
-			continue;
-		}
-
-		newcli->fd = client_fd;
-		pthread_mutex_lock(&mutex);
-		TAILQ_INSERT_TAIL(&clients, newcli, entries);
-		num_clients++;
-		pthread_mutex_unlock(&mutex);
+	if (client_fd == -1 ) {
+		syslog(LOG_ERR, "accept failed (%s)", strerror(errno));
+		return;
 	}
 
-	pthread_mutex_lock(&mutex);
-    struct client *cli, *tmp;
-    TAILQ_FOREACH_SAFE(cli, &clients, entries, tmp) {
-        close(cli->fd);
-        TAILQ_REMOVE(&clients, cli, entries);
-        free(cli);
-    }
-    pthread_mutex_unlock(&mutex);
+	if (reject) {
+		close(client_fd);
+		return;
+	}
 
-	return NULL;
+	struct client *newcli = calloc(1, sizeof(*newcli));
+	if (!newcli) {
+		syslog(LOG_ERR, "calloc failed for new client");
+		close(client_fd);
+		return;
+	}
+
+	newcli->fd = client_fd;
+	TAILQ_INSERT_TAIL(&clients, newcli, entries);
+	num_clients++;
 }
 
 __dead static void
@@ -279,48 +239,73 @@ devpubd_eventloop(void)
 {
 	const char *event, *device[2];
 	prop_dictionary_t ev;
-	int res;
+	int res, max_fd, rv;
+	struct timeval tv;
+	fd_set fds;
+	int reported = 0;
+	int reject = 0;
 
 	assert(drvctl_fd != -1);
 
 	device[1] = NULL;
 
-	int *arg = calloc(1, sizeof(int));
-	if (!arg) {
-		syslog(LOG_ERR, "calloc failed for arg");
-		exit(EXIT_FAILURE);
-	}
 	socket_fd = create_socket(NDEVD_SOCKET);
-	*arg = socket_fd;
-
-	if (pthread_mutex_init(&mutex, NULL) != 0) {
-		syslog(LOG_ERR, "thread init failed");
-		free(arg);
-		exit(EXIT_FAILURE);
-	}
-
-	if (pthread_create(&thread, NULL, listening_thread, arg) != 0) {
-		syslog(LOG_ERR, "thread create failed");
-		free(arg);
-		exit(EXIT_FAILURE);
-	}
+	max_fd = (drvctl_fd > socket_fd ? drvctl_fd : socket_fd) + 1;
 
 	while (!ndevd_stop) {
-		res = prop_dictionary_recv_ioctl(drvctl_fd, DRVGETEVENT, &ev);
-		if (res)
-			err(EXIT_FAILURE, "DRVGETEVENT failed");
-		prop_dictionary_get_string(ev, "event", &event);
-		prop_dictionary_get_string(ev, "device", &device[0]);
+		tv.tv_sec = 60;
+		tv.tv_usec = 0;
+		FD_ZERO(&fds);
+		FD_SET(drvctl_fd, &fds);
+		FD_SET(socket_fd, &fds);
+		rv = select(max_fd, &fds, NULL, NULL, &tv);
+		if (rv == -1) {
+			if (errno == EINTR)
+				continue;
+			err(EXIT_FAILURE, "select() failed");
+		}
+		if (FD_ISSET(drvctl_fd, &fds)) {
+			res = prop_dictionary_recv_ioctl(drvctl_fd, DRVGETEVENT, &ev);
+			if (res)
+				err(EXIT_FAILURE, "DRVGETEVENT failed");
+			prop_dictionary_get_string(ev, "event", &event);
+			prop_dictionary_get_string(ev, "device", &device[0]);
 
-		printf("%s: event='%s', device='%s'\n", __func__,
-			event, device[0]);
+			printf("%s: event='%s', device='%s'\n", __func__, event, device[0]);
 
-		devpubd_eventhandler(event, device);
+			devpubd_eventhandler(event, device);
 
-		notify_clients(event, device[0]);
+			notify_clients(event, device[0]);
 
-		prop_object_release(ev);
+			prop_object_release(ev);
+		}
+		if (FD_ISSET(socket_fd, &fds)) {
+			if (num_clients >= max_clients) {
+				if (!reported) {
+					syslog(LOG_WARNING, "stop accepting, client/limit: %d/%d", num_clients, max_clients);
+					reported = 1;
+				}
+				reject = 1;
+			} else {
+				if (reported) {
+					syslog(LOG_DEBUG, "start accepting, client/limit: %d/%d", num_clients, max_clients);
+					reported = 0;
+				}
+				reject = 0;
+			}
+			handle_clients(reject);
+		}
 	}
+
+	struct client *cli, *tmp;
+    TAILQ_FOREACH_SAFE(cli, &clients, entries, tmp) {
+    	close(cli->fd);
+    	TAILQ_REMOVE(&clients, cli, entries);
+    	free(cli);
+    }
+	close(socket_fd);
+	unlink(NDEVD_SOCKET);
+	close(drvctl_fd);
 }
 
 static void
@@ -470,6 +455,7 @@ main(int argc, char *argv[])
 	}
 
 	if (!once) {
+		signal(SIGPIPE, SIG_IGN);
 		signal(SIGHUP, close_ndevd);
 		signal(SIGINT, close_ndevd);
 		signal(SIGTERM, close_ndevd);
@@ -477,13 +463,6 @@ main(int argc, char *argv[])
 	}
 
 	close(drvctl_fd);
-	if (socket_fd != -1) {
-		shutdown(socket_fd, SHUT_RDWR);
-		pthread_join(thread, NULL);
-		pthread_mutex_destroy(&mutex);
-		close(socket_fd);
-		unlink(NDEVD_SOCKET);
-	}
 
 	return EXIT_SUCCESS;
 }
