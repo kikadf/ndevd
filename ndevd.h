@@ -10,6 +10,7 @@
 struct ndevd_msg {
     char event[NDEVD_MSG];
     char device[NDEVD_MSG];
+    char parent[NDEVD_MSG];
 };
 
 #endif /* NDEVD_H */

@@ -119,18 +119,20 @@ create_socket(const char *name)
 }
 
 static void
-notify_clients(const char *event, const char *device)
+notify_clients(const char *event, const char *device, const char *parent)
 {
 	struct client *cli, *tmp;
 	struct ndevd_msg msg;
-	int event_len, device_len;
+	int event_len, device_len, parent_len;
 	int maxlen = sizeof(msg.event);
 	int msglen = sizeof(msg);
 
 	event_len = snprintf(msg.event, maxlen, "%s", event);
 	device_len = snprintf(msg.device, maxlen, "%s", device);
+	parent_len = snprintf(msg.parent, maxlen, "%s", parent);
 
-	if (event_len < 0 || device_len < 0 || event_len >= maxlen || device_len >= maxlen) {
+	if (event_len < 0 || device_len < 0 || parent_len < 0 ||
+		event_len >= maxlen || device_len >= maxlen || parent_len >= maxlen) {
 		syslog(LOG_ERR, "notify_clients: message too long or encoding error");
 		return;
 	}
@@ -237,7 +239,7 @@ devpubd_eventhandler(const char *event, const char **device)
 __dead static void
 devpubd_eventloop(void)
 {
-	const char *event, *device[2];
+	const char *event, *device[2], *parent;
 	prop_dictionary_t ev;
 	int res, max_fd, rv;
 	struct timeval tv;
@@ -270,12 +272,13 @@ devpubd_eventloop(void)
 				err(EXIT_FAILURE, "DRVGETEVENT failed");
 			prop_dictionary_get_string(ev, "event", &event);
 			prop_dictionary_get_string(ev, "device", &device[0]);
+			prop_dictionary_get_string(ev, "parent", &parent);
 
 			printf("%s: event='%s', device='%s'\n", __func__, event, device[0]);
 
 			devpubd_eventhandler(event, device);
 
-			notify_clients(event, device[0]);
+			notify_clients(event, device[0], parent);
 
 			prop_object_release(ev);
 		}
