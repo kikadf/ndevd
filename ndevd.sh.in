@@ -2,7 +2,7 @@
 #
 
 # PROVIDE: ndevd devpubd
-# REQUIRE: root
+# REQUIRE: mountcritremote syslogd
 # KEYWORD: shutdown
 
 $_rc_subr_loaded . /etc/rc.subr
