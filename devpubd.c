@@ -60,6 +60,13 @@ __RCSID("$NetBSD: devpubd.c,v 1.7 2021/06/21 03:14:12 christos Exp $");
 
 #include "ndevd.h"
 
+#define LOG_BUFFER_SIZE 100
+#define LOG_MSG_MAX     512
+
+static char log_buffer[LOG_BUFFER_SIZE][LOG_MSG_MAX];
+static int log_count = 0;
+static int syslog_connected = 0;
+
 static int drvctl_fd = -1;
 static const char devpubd_script[] = DEVPUBD_RUN_HOOKS;
 static int socket_fd = -1;
@@ -87,6 +94,36 @@ close_ndevd(int a)
 	ndevd_stop = 1;
 }
 
+// syslog wrapper
+static void
+syslog_w(int priority, const char *fmt, ...)
+{
+	va_list ap;
+	char msg[LOG_MSG_MAX];
+
+	va_start(ap, fmt);
+	vsnprintf(msg, sizeof(msg), fmt, ap);
+	va_end(ap);
+
+	if (!syslog_connected && access(_PATH_LOG, F_OK) == 0) {
+		syslog_connected = 1;
+		for (int i = 0; i < log_count; i++) {
+			syslog(LOG_INFO, "%s", log_buffer[i]);
+		}
+	}
+	
+	if (syslog_connected) {
+		syslog(priority, "%s", msg);
+    } else {
+		fprintf(stderr, "%s\n", msg);
+		if (log_count < LOG_BUFFER_SIZE) {
+			strncpy(log_buffer[log_count], msg, LOG_MSG_MAX - 1);
+            log_buffer[log_count][LOG_MSG_MAX - 1] = '\0';
+            log_count++;
+		}
+	}
+}
+
 static int
 create_socket(const char *name)
 {
@@ -94,7 +131,7 @@ create_socket(const char *name)
 	struct sockaddr_un sun;
 
 	if ((fd = socket(PF_LOCAL, SOCK_SEQPACKET, 0)) < 0) {
-		syslog(LOG_ERR, "socket: '%s'", name);
+		syslog_w(LOG_ERR, "socket: '%s'", name);
 		exit(EXIT_FAILURE);
 	}
 	bzero(&sun, sizeof(sun));
@@ -103,16 +140,16 @@ create_socket(const char *name)
 	slen = SUN_LEN(&sun);
 	unlink(name);
 	if (bind(fd, (struct sockaddr *) & sun, slen) < 0) {
-		syslog(LOG_ERR, "bind: '%s'", name);
+		syslog_w(LOG_ERR, "bind: '%s'", name);
 		exit(EXIT_FAILURE);
 	}
 	listen(fd, max_clients);
 	if (chown(name, 0, 0)) {
-		syslog(LOG_ERR, "chown: '%s'", name);
+		syslog_w(LOG_ERR, "chown: '%s'", name);
 		exit(EXIT_FAILURE);
 	}
 	if (chmod(name, 0666)) {
-		syslog(LOG_ERR, "chmod: '%s'", name);
+		syslog_w(LOG_ERR, "chmod: '%s'", name);
 		exit(EXIT_FAILURE);
 	}
 	return (fd);
@@ -133,13 +170,13 @@ notify_clients(const char *event, const char *device, const char *parent)
 
 	if (event_len < 0 || device_len < 0 || parent_len < 0 ||
 		event_len >= maxlen || device_len >= maxlen || parent_len >= maxlen) {
-		syslog(LOG_ERR, "notify_clients: message too long or encoding error");
+		syslog_w(LOG_ERR, "notify_clients: message too long or encoding error");
 		return;
 	}
 
 	TAILQ_FOREACH_SAFE(cli, &clients, entries, tmp) {
 		if (send(cli->fd, &msg, msglen, MSG_EOR | MSG_NOSIGNAL) != msglen) {
-			syslog(LOG_WARNING, "notification of (%d) failed (%s), dropped from the clients", cli->fd, strerror(errno));
+			syslog_w(LOG_WARNING, "notification of (%d) failed (%s), dropped from the clients", cli->fd, strerror(errno));
 			close(cli->fd);
 			TAILQ_REMOVE(&clients, cli, entries);
 			num_clients--;
@@ -153,7 +190,7 @@ handle_clients(int reject)
 	int client_fd = accept(socket_fd, NULL, NULL );
 
 	if (client_fd == -1 ) {
-		syslog(LOG_ERR, "accept failed (%s)", strerror(errno));
+		syslog_w(LOG_ERR, "accept failed (%s)", strerror(errno));
 		return;
 	}
 
@@ -164,7 +201,7 @@ handle_clients(int reject)
 
 	struct client *newcli = calloc(1, sizeof(*newcli));
 	if (!newcli) {
-		syslog(LOG_ERR, "calloc failed for new client");
+		syslog_w(LOG_ERR, "calloc failed for new client");
 		close(client_fd);
 		return;
 	}
@@ -181,7 +218,7 @@ devpubd_exec(const char *path, char * const *argv)
 
 	error = execv(path, argv);
 	if (error) {
-		syslog(LOG_ERR, "couldn't exec '%s': %m", path);
+		syslog_w(LOG_ERR, "couldn't exec '%s': %m", path);
 		exit(EXIT_FAILURE);
 	}
 
@@ -198,7 +235,7 @@ devpubd_eventhandler(const char *event, const char **device)
 
 	for (ndevs = 0, i = 0; device[i] != NULL; i++) {
 		++ndevs;
-		syslog(LOG_DEBUG, "event = '%s', device = '%s'", event,
+		syslog_w(LOG_DEBUG, "event = '%s', device = '%s'", event,
 			device[i]);
 	}
 
@@ -213,21 +250,21 @@ devpubd_eventhandler(const char *event, const char **device)
 	pid = fork();
 	switch (pid) {
 	case -1:
-		syslog(LOG_ERR, "fork failed: %m");
+		syslog_w(LOG_ERR, "fork failed: %m");
 		break;
 	case 0:
 		devpubd_exec(devpubd_script, argv);
 		/* NOTREACHED */
 	default:
 		if (waitpid(pid, &status, 0) == -1) {
-			syslog(LOG_ERR, "waitpid(%d) failed: %m", pid);
+			syslog_w(LOG_ERR, "waitpid(%d) failed: %m", pid);
 			break;
 		}
 		if (WIFEXITED(status) && WEXITSTATUS(status)) {
-			syslog(LOG_WARNING, "%s exited with status %d",
+			syslog_w(LOG_WARNING, "%s exited with status %d",
 				devpubd_script, WEXITSTATUS(status));
 		} else if (WIFSIGNALED(status)) {
-			syslog(LOG_WARNING, "%s received signal %d",
+			syslog_w(LOG_WARNING, "%s received signal %d",
 				devpubd_script, WTERMSIG(status));
 		}
 		break;
@@ -285,13 +322,13 @@ devpubd_eventloop(void)
 		if (FD_ISSET(socket_fd, &fds)) {
 			if (num_clients >= max_clients) {
 				if (!reported) {
-					syslog(LOG_WARNING, "stop accepting, client/limit: %d/%d", num_clients, max_clients);
+					syslog_w(LOG_WARNING, "stop accepting, client/limit: %d/%d", num_clients, max_clients);
 					reported = 1;
 				}
 				reject = 1;
 			} else {
 				if (reported) {
-					syslog(LOG_DEBUG, "start accepting, client/limit: %d/%d", num_clients, max_clients);
+					syslog_w(LOG_DEBUG, "start accepting, client/limit: %d/%d", num_clients, max_clients);
 					reported = 0;
 				}
 				reject = 0;
@@ -328,7 +365,7 @@ devpubd_probe(const char *device)
 	/* Get the child device count for this device */
 	error = ioctl(drvctl_fd, DRVLISTDEV, &laa);
 	if (error) {
-		syslog(LOG_ERR, "DRVLISTDEV failed: %m");
+		syslog_w(LOG_ERR, "DRVLISTDEV failed: %m");
 		return;
 	}
 
@@ -344,7 +381,7 @@ child_count_changed:
 	len = children * sizeof(laa.l_childname[0]);
 	laa.l_childname = realloc(laa.l_childname, len);
 	if (laa.l_childname == NULL) {
-		syslog(LOG_ERR, "couldn't allocate %zu bytes", len);
+		syslog_w(LOG_ERR, "couldn't allocate %zu bytes", len);
 		laa.l_childname = p;
 		goto done;
 	}
@@ -352,7 +389,7 @@ child_count_changed:
 	/* Get a list of child devices */
 	error = ioctl(drvctl_fd, DRVLISTDEV, &laa);
 	if (error) {
-		syslog(LOG_ERR, "DRVLISTDEV failed: %m");
+		syslog_w(LOG_ERR, "DRVLISTDEV failed: %m");
 		goto done;
 	}
 
