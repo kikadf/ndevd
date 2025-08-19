@@ -115,7 +115,7 @@ syslog_w(int priority, const char *fmt, ...)
 	if (syslog_connected) {
 		syslog(priority, "%s", msg);
     } else {
-		fprintf(stderr, "%s\n", msg);
+		fprintf(stdin, "ndevd: %s\n", msg);
 		if (log_count < LOG_BUFFER_SIZE) {
 			strncpy(log_buffer[log_count], msg, LOG_MSG_MAX - 1);
             log_buffer[log_count][LOG_MSG_MAX - 1] = '\0';
@@ -131,8 +131,8 @@ create_socket(const char *name)
 	struct sockaddr_un sun;
 
 	if ((fd = socket(PF_LOCAL, SOCK_SEQPACKET, 0)) < 0) {
-		syslog_w(LOG_ERR, "socket: '%s'", name);
-		exit(EXIT_FAILURE);
+		syslog_w(LOG_ERR, "socket error: '%s'", name);
+		return -1;
 	}
 	bzero(&sun, sizeof(sun));
 	sun.sun_family = AF_UNIX;
@@ -140,18 +140,19 @@ create_socket(const char *name)
 	slen = SUN_LEN(&sun);
 	unlink(name);
 	if (bind(fd, (struct sockaddr *) & sun, slen) < 0) {
-		syslog_w(LOG_ERR, "bind: '%s'", name);
-		exit(EXIT_FAILURE);
+		syslog_w(LOG_ERR, "bind error: '%s'", name);
+		return -1;
 	}
 	listen(fd, max_clients);
 	if (chown(name, 0, 0)) {
-		syslog_w(LOG_ERR, "chown: '%s'", name);
-		exit(EXIT_FAILURE);
+		syslog_w(LOG_ERR, "chown error: '%s'", name);
+		return -1;
 	}
 	if (chmod(name, 0666)) {
-		syslog_w(LOG_ERR, "chmod: '%s'", name);
-		exit(EXIT_FAILURE);
+		syslog_w(LOG_ERR, "chmod error: '%s'", name);
+		return -1;
 	}
+	syslog_w(LOG_INFO, "socket created");
 	return (fd);
 }
 
@@ -278,7 +279,7 @@ devpubd_eventloop(void)
 {
 	const char *event, *device[2], *parent;
 	prop_dictionary_t ev;
-	int res, max_fd, rv;
+	int res, max_fd, rv, a = 0;
 	struct timeval tv;
 	fd_set fds;
 	int reported = 0;
@@ -288,10 +289,16 @@ devpubd_eventloop(void)
 
 	device[1] = NULL;
 
-	socket_fd = create_socket(NDEVD_SOCKET);
-	max_fd = (drvctl_fd > socket_fd ? drvctl_fd : socket_fd) + 1;
-
 	while (!ndevd_stop) {
+		if (socket_fd < 0 || (a < 1 && access(NDEVD_SOCKET, F_OK) < 0)) {
+			if (socket_fd >= 0) {
+				close(socket_fd);
+				a++;
+				syslog_w(LOG_WARNING, "%s recreate", NDEVD_SOCKET);
+			}
+			socket_fd = create_socket(NDEVD_SOCKET);
+			max_fd = (drvctl_fd > socket_fd ? drvctl_fd : socket_fd) + 1;
+		}
 		tv.tv_sec = 60;
 		tv.tv_usec = 0;
 		FD_ZERO(&fds);
