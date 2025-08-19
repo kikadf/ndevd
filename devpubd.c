@@ -125,7 +125,7 @@ syslog_w(int priority, const char *fmt, ...)
     } else {
 		fprintf(stdin, "ndevd: %s\n", msg);
 		if (log_count < LOG_BUFFER_SIZE) {
-			struct log_msg *newlog = calloc(1, sizeof(*newlog));
+			struct log_msg *newlog = (struct log_msg *)calloc(1, sizeof(*newlog));
 			strncpy(newlog->logmsg, msg, LOG_MSG_MAX - 1);
 			newlog->logmsg[LOG_MSG_MAX - 1] = '\0';
 			newlog->priority = priority;
@@ -211,7 +211,7 @@ handle_clients(int reject)
 		return;
 	}
 
-	struct client *newcli = calloc(1, sizeof(*newcli));
+	struct client *newcli = (struct client *)calloc(1, sizeof(*newcli));
 	if (!newcli) {
 		syslog_w(LOG_ERR, "calloc failed for new client");
 		close(client_fd);
@@ -251,11 +251,11 @@ devpubd_eventhandler(const char *event, const char **device)
 			device[i]);
 	}
 
-	argv = calloc(3 + ndevs, sizeof(*argv));
-	argv[0] = __UNCONST(devpubd_script);
-	argv[1] = __UNCONST(event);
+	argv = (char **)calloc(3 + ndevs, sizeof(*argv));
+	argv[0] = (char *)__UNCONST(devpubd_script);
+	argv[1] = (char *)__UNCONST(event);
 	for (i = 0; i < ndevs; i++) {
-		argv[2 + i] = __UNCONST(device[i]);
+		argv[2 + i] = (char *)__UNCONST(device[i]);
 	}
 	argv[2 + i] = NULL;
 
@@ -396,10 +396,10 @@ child_count_changed:
 	children = laa.l_children;
 
 	len = children * sizeof(laa.l_childname[0]);
-	laa.l_childname = realloc(laa.l_childname, len);
+	laa.l_childname = (char (*)[16])realloc(laa.l_childname, len);
 	if (laa.l_childname == NULL) {
 		syslog_w(LOG_ERR, "couldn't allocate %zu bytes", len);
-		laa.l_childname = p;
+		laa.l_childname = (char (*)[16])p;
 		goto done;
 	}
 
@@ -419,7 +419,7 @@ child_count_changed:
 	 * then scan each one for additional devices.
 	 */
 	for (n = 0; n < laa.l_children; n++) {
-		struct devpubd_probe_event *ev = calloc(1, sizeof(*ev));
+		struct devpubd_probe_event *ev = (struct devpubd_probe_event *)calloc(1, sizeof(*ev));
 		ev->device = strdup(laa.l_childname[n]);
 		TAILQ_INSERT_TAIL(&devpubd_probe_events, ev, entries);
 	}
@@ -446,7 +446,7 @@ devpubd_init(void)
 	TAILQ_FOREACH(ev, &devpubd_probe_events, entries) {
 		++ndevs;
 	}
-	devs = calloc(ndevs + 1, sizeof(*devs));
+	devs = (const char **)calloc(ndevs + 1, sizeof(*devs));
 	i = 0;
 	TAILQ_FOREACH(ev, &devpubd_probe_events, entries) {
 		devs[i++] = ev->device;
