@@ -63,7 +63,6 @@ __RCSID("$NetBSD: devpubd.c,v 1.7 2021/06/21 03:14:12 christos Exp $");
 #define LOG_BUFFER_SIZE 100
 #define LOG_MSG_MAX     512
 
-static char log_buffer[LOG_BUFFER_SIZE][LOG_MSG_MAX];
 static int log_count = 0;
 static int syslog_connected = 0;
 
@@ -73,6 +72,14 @@ static int socket_fd = -1;
 static unsigned int max_clients = 50;
 static unsigned int num_clients = 0;
 static unsigned int ndevd_stop = 0;
+
+struct log_msg {
+	int priority;
+	char logmsg[LOG_MSG_MAX];
+	TAILQ_ENTRY(log_msg) entries;
+};
+
+static TAILQ_HEAD(, log_msg) log_msgs;
 
 struct devpubd_probe_event {
 	char *device;
@@ -99,6 +106,7 @@ static void
 syslog_w(int priority, const char *fmt, ...)
 {
 	va_list ap;
+	struct log_msg *log;
 	char msg[LOG_MSG_MAX];
 
 	va_start(ap, fmt);
@@ -107,8 +115,8 @@ syslog_w(int priority, const char *fmt, ...)
 
 	if (!syslog_connected && access(_PATH_LOG, F_OK) == 0) {
 		syslog_connected = 1;
-		for (int i = 0; i < log_count; i++) {
-			syslog(LOG_INFO, "%s", log_buffer[i]);
+		TAILQ_FOREACH(log, &log_msgs, entries) {
+			syslog(log->priority, "%s", log->logmsg);
 		}
 	}
 	
@@ -117,9 +125,12 @@ syslog_w(int priority, const char *fmt, ...)
     } else {
 		fprintf(stdin, "ndevd: %s\n", msg);
 		if (log_count < LOG_BUFFER_SIZE) {
-			strncpy(log_buffer[log_count], msg, LOG_MSG_MAX - 1);
-            log_buffer[log_count][LOG_MSG_MAX - 1] = '\0';
-            log_count++;
+			struct log_msg *newlog = calloc(1, sizeof(*newlog));
+			strncpy(newlog->logmsg, msg, LOG_MSG_MAX - 1);
+			newlog->logmsg[LOG_MSG_MAX - 1] = '\0';
+			newlog->priority = priority;
+			TAILQ_INSERT_TAIL(&log_msgs, newlog, entries);
+			log_count++;
 		}
 	}
 }
@@ -350,6 +361,11 @@ devpubd_eventloop(void)
 		TAILQ_REMOVE(&clients, cli, entries);
 		free(cli);
 	}
+	struct log_msg *msg, *mtmp;
+	TAILQ_FOREACH_SAFE(msg, &log_msgs, entries, mtmp) {
+		TAILQ_REMOVE(&log_msgs, msg, entries);
+		free(msg);
+	}
 	close(socket_fd);
 	unlink(NDEVD_SOCKET);
 	close(drvctl_fd);
@@ -427,6 +443,8 @@ devpubd_init(void)
 	struct devpubd_probe_event *ev;
 	const char **devs;
 	size_t ndevs, i;
+
+	TAILQ_INIT(&log_msgs);
 
 	TAILQ_INIT(&devpubd_probe_events);
 	devpubd_probe(NULL);
