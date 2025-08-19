@@ -361,14 +361,8 @@ devpubd_eventloop(void)
 		TAILQ_REMOVE(&clients, cli, entries);
 		free(cli);
 	}
-	struct log_msg *msg, *mtmp;
-	TAILQ_FOREACH_SAFE(msg, &log_msgs, entries, mtmp) {
-		TAILQ_REMOVE(&log_msgs, msg, entries);
-		free(msg);
-	}
 	close(socket_fd);
 	unlink(NDEVD_SOCKET);
-	close(drvctl_fd);
 }
 
 static void
@@ -525,6 +519,12 @@ main(int argc, char *argv[])
 		signal(SIGINT, close_ndevd);
 		signal(SIGTERM, close_ndevd);
 		devpubd_eventloop();
+	}
+
+	struct log_msg *msg, *mtmp;
+	TAILQ_FOREACH_SAFE(msg, &log_msgs, entries, mtmp) {
+		TAILQ_REMOVE(&log_msgs, msg, entries);
+		free(msg);
 	}
 
 	close(drvctl_fd);
