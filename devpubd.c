@@ -60,7 +60,7 @@ __RCSID("$NetBSD: devpubd.c,v 1.7 2021/06/21 03:14:12 christos Exp $");
 
 #include "ndevd.h"
 
-#define LOG_BUFFER_SIZE 100
+#define LOG_BUFFER_SIZE 300
 #define LOG_MSG_MAX     512
 
 static int log_count = 0;
@@ -329,7 +329,7 @@ devpubd_eventloop(void)
 			prop_dictionary_get_string(ev, "device", &device[0]);
 			prop_dictionary_get_string(ev, "parent", &parent);
 
-			printf("%s: event='%s', device='%s'\n", __func__, event, device[0]);
+			syslog_w(LOG_INFO,"event='%s', device='%s', parent='%s'", event, device[0], parent);
 
 			devpubd_eventhandler(event, device);
 
