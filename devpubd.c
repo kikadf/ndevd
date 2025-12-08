@@ -285,14 +285,15 @@ devpubd_eventhandler(const char *event, const char **device)
 	free(argv);
 }
 
-__dead static void
+static void
 devpubd_eventloop(void)
 {
 	const char *event, *device[2], *parent;
 	prop_dictionary_t ev;
-	int res, max_fd, rv, a = 0;
+	int res, rv, a = 0;
 	struct timeval tv;
 	fd_set fds;
+	int max_fd = 0;
 	int reported = 0;
 	int reject = 0;
 

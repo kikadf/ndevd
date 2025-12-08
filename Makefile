@@ -1,6 +1,6 @@
-CC=		gcc
-SED=		sed
-INSTALL=	install
+CC?=		gcc
+SED?=		sed
+INSTALL?=	install
 RM=		rm -f
 
 PROG=		ndevd
@@ -15,7 +15,7 @@ CLEANFILES=	$(SCRIPT) $(RCSCRIPT)
 PREFIX?=	/usr/pkg
 BINDIR?=	${PREFIX}/sbin
 INCLUDEDIR=	${PREFIX}/include
-MANDIR=		${PREFIX}/man/man8
+MANDIR?=	${PREFIX}/man/man8
 SCRIPTDIR=	${PREFIX}/libexec
 HOOKSDIR=	${SCRIPTDIR}/ndevd-hooks
 RCDIR=		${PREFIX}/share/examples/rc.d
