@@ -16,7 +16,7 @@ INCLUDEDIR=	${PREFIX}/include
 MANDIR?=	${PREFIX}/man/man8
 RCDIR=		${PREFIX}/share/examples/rc.d
 
-CFLAGS+=	-DDEVPUBD_RUN_HOOKS=\"/libexec/ndevd-run-hooks\"
+CFLAGS+=	-DDEVPUBD_RUN_HOOKS=\"/libexec/devpubd-run-hooks\"
 LIBS+=		-lprop -pthread
 
 all: $(RCSCRIPT) prog
