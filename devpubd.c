@@ -176,9 +176,9 @@ notify_clients(const char *event, const char *device, const char *parent)
 	int maxlen = sizeof(msg.event);
 	int msglen = sizeof(msg);
 
-	event_len = snf(msg.event, maxlen, "%s", event);
-	device_len = snf(msg.device, maxlen, "%s", device);
-	parent_len = snf(msg.parent, maxlen, "%s", parent);
+	event_len = snprintf(msg.event, maxlen, "%s", event);
+	device_len = snprintf(msg.device, maxlen, "%s", device);
+	parent_len = snprintf(msg.parent, maxlen, "%s", parent);
 
 	if (event_len < 0 || device_len < 0 || parent_len < 0 ||
 		event_len >= maxlen || device_len >= maxlen || parent_len >= maxlen) {
@@ -466,7 +466,7 @@ devpubd_init(void)
 __dead static void
 usage(void)
 {
-	ff(stderr, "usage: %s [-1f]\n", getprogname());
+	fprintf(stderr, "usage: %s [-1f]\n", getprogname());
 	exit(EXIT_FAILURE);
 }
 
